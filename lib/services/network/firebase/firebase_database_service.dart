@@ -50,10 +50,17 @@ class FirebaseDatabaseService extends GetxService {
     try {
       final response = await HttpSvc.fcm.getServiceAccount();
       Map<String, dynamic>? data = response.data["data"];
-      if (!isNullOrEmpty(data)) {
-        FCMData newData = FCMData.fromMap(data!);
-        await SettingsSvc.saveFCMData(newData);
+      if (isNullOrEmpty(data)) {
+        // A 200 with an empty payload means the server has no Firebase project set up.
+        // Reporting success here told callers the config had been loaded when nothing was
+        // saved at all, so they went on to register a device against whatever stale config
+        // was already on disk.
+        Logger.warn("Server returned no Firebase configuration", tag: 'FCM-Auth');
+        return false;
       }
+
+      FCMData newData = FCMData.fromMap(data!);
+      await SettingsSvc.saveFCMData(newData);
     } catch (e, s) {
       Logger.error("Failed to fetch Firebase Config!", error: e, trace: s);
       if (e is Response && e.statusCode == 404) {

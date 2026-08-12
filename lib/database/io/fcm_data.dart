@@ -1,6 +1,7 @@
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/generated/objectbox.g.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
 import 'package:objectbox/objectbox.dart';
 
@@ -38,26 +39,38 @@ class FCMData {
     );
   }
 
-  Future<FCMData> save({bool wait = false}) async {
+  /// Persists the row and the SharedPreferences mirror the Android `firebase-auth` handler
+  /// falls back on.
+  ///
+  /// The mirror write is always awaited. It used to be a detached future unless the caller
+  /// passed `wait: true`, which meant database migration 4 — whose entire job is to create
+  /// the mirror for installs that predate it — could durably bump `dbVersion` before the
+  /// write landed. The migration never re-runs after that, leaving the row and the mirror
+  /// permanently out of step.
+  Future<FCMData> save() async {
     if (kIsWeb) return this;
+
+    // `saveConfig` removes a key rather than storing null, so persisting a half-parsed
+    // config (an unexpected shape from the server sends `FCMData.fromMap` home with nulls)
+    // would delete a working apiKey/applicationID from both stores. Keep the last good one
+    // instead — these two are the only values Firebase cannot be initialized without.
+    if (apiKey == null || applicationID == null) {
+      Logger.warn("Refusing to save FCM data with no apiKey/applicationID", tag: 'FCMData');
+      return this;
+    }
+
     List<FCMData> data = Database.fcmData.getAll();
     if (data.length > 1) data.removeRange(1, data.length); // These were being ignored anyway
     id = !Database.fcmData.isEmpty() ? data.first.id : null;
     Database.fcmData.put(this);
-    final future = Future(() async {
-      await PrefsSvc.firebase.saveConfig(
-        projectID: projectID,
-        storageBucket: storageBucket,
-        apiKey: apiKey,
-        firebaseURL: firebaseURL,
-        clientID: clientID,
-        applicationID: applicationID,
-      );
-    });
-
-    if (wait) {
-      await future;
-    }
+    await PrefsSvc.firebase.saveConfig(
+      projectID: projectID,
+      storageBucket: storageBucket,
+      apiKey: apiKey,
+      firebaseURL: firebaseURL,
+      clientID: clientID,
+      applicationID: applicationID,
+    );
 
     SettingsSvc.fcmData = this;
     return this;

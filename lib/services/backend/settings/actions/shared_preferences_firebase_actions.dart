@@ -40,6 +40,23 @@ class SharedPreferencesFirebaseActions {
     await _setOrRemoveString(_applicationIDKey, applicationID);
   }
 
+  /// Whether the stored mirror already matches this config, so a repair can skip the write.
+  bool matchesConfig({
+    String? projectID,
+    String? storageBucket,
+    String? apiKey,
+    String? firebaseURL,
+    String? clientID,
+    String? applicationID,
+  }) {
+    return getProjectID() == projectID &&
+        getStorageBucket() == storageBucket &&
+        getApiKey() == apiKey &&
+        getFirebaseURL() == firebaseURL &&
+        getClientID() == clientID &&
+        getApplicationID() == applicationID;
+  }
+
   Future<void> clearConfig() async {
     await service.i.remove(_projectIDKey);
     await service.i.remove(_storageBucketKey);

@@ -229,7 +229,10 @@ class Database {
         // Version 4 saves FCM Data to the shared preferences for use in Tasker integration
         case 4:
           SettingsSvc.loadFcmDataFromDatabase();
-          SettingsSvc.fcmData.save();
+          // Must be awaited: the version bump below is durable, so an unawaited write here
+          // could lose the race and leave the mirror missing forever (the migration never
+          // runs again once dbVersion has moved past 4).
+          await SettingsSvc.fcmData.save();
           break;
 
         case 5:

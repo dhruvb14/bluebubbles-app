@@ -115,6 +115,39 @@ class SettingsService {
     fcmData = FCMData.getFCM();
   }
 
+  /// Re-asserts the SharedPreferences mirror of [fcmData] from the database row.
+  ///
+  /// The Android push path resolves the server URL by calling `FirebaseAuthHandler`
+  /// directly (`Utils.getServerUrl`) without passing any config, so for those callers the
+  /// mirror is the only copy that exists. Nothing else repairs it once it drifts — a
+  /// mirror write that never landed used to leave the row and the mirror permanently out
+  /// of step. The write is cheap and idempotent, so just do it on every startup.
+  Future<void> repairFcmMirror() async {
+    if (kIsWeb) return;
+    // Nothing worth mirroring, and writing nulls would clear whatever is already there.
+    if (fcmData.apiKey == null || fcmData.applicationID == null) return;
+    if (PrefsSvc.firebase.matchesConfig(
+      projectID: fcmData.projectID,
+      storageBucket: fcmData.storageBucket,
+      apiKey: fcmData.apiKey,
+      firebaseURL: fcmData.firebaseURL,
+      clientID: fcmData.clientID,
+      applicationID: fcmData.applicationID,
+    )) {
+      return;
+    }
+
+    Logger.info("Firebase preference mirror is out of step with the database, rewriting it", tag: 'SettingsService');
+    await PrefsSvc.firebase.saveConfig(
+      projectID: fcmData.projectID,
+      storageBucket: fcmData.storageBucket,
+      apiKey: fcmData.apiKey,
+      firebaseURL: fcmData.firebaseURL,
+      clientID: fcmData.clientID,
+      applicationID: fcmData.applicationID,
+    );
+  }
+
   Future<void> updateDisplayMode() async {
     if (!kIsWeb && !kIsDesktop) {
       try {
@@ -128,7 +161,7 @@ class SettingsService {
 
   Future<void> saveFCMData(FCMData data) async {
     fcmData = data;
-    await fcmData.save(wait: true);
+    await fcmData.save();
   }
 
   Future<Map<String, dynamic>> getServerDetailsDict() async {
