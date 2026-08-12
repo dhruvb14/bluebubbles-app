@@ -157,6 +157,10 @@ class _FirebasePanelState extends State<FirebasePanel> with ThemeHelpers {
                               }
                             } catch (e) {
                               Logger.error("Error loading Firebase Configurations: ${e.toString()}");
+                              // Without this the dialog falls through to its success text, so a
+                              // failed registration still reported "Successfully loaded Firebase
+                              // Configurations!" while the real error only reached the logs.
+                              error.value = "Failed to load Firebase configurations: ${e.toString()}";
                             } finally {
                               isLoading.value = false;
                             }

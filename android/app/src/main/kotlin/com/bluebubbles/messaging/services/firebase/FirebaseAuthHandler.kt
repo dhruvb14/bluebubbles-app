@@ -16,6 +16,7 @@ import io.flutter.plugin.common.MethodChannel
 class FirebaseAuthHandler: MethodCallHandlerImpl() {
     companion object {
         const val tag: String = "firebase-auth"
+        const val preferencesFile: String = "FlutterSharedPreferences"
         var firebaseApp: FirebaseApp? = null
     }
 
@@ -24,14 +25,37 @@ class FirebaseAuthHandler: MethodCallHandlerImpl() {
         result: MethodChannel.Result,
         context: Context
     ) {
-        // Fetch Firebase details directly from preferences
-        val prefs = context.getSharedPreferences("FlutterSharedPreferences", 0)
-        val projectId: String? = prefs.getString("projectID", null)
-        val storageBucket: String? = prefs.getString("storageBucket", null)
-        val apiKey: String = prefs.getString("apiKey", null)!!
-        val databaseUrl: String? = prefs.getString("firebaseURL", null)
-        val gcmSenderId: String? = prefs.getString("clientID", null)
-        val applicationId: String = prefs.getString("applicationID", null)!!
+        val prefs = context.getSharedPreferences(preferencesFile, 0)
+
+        // Dart sends the whole config along with the call and separately mirrors it into
+        // FlutterSharedPreferences. Prefer the arguments — they come straight off the FCMData
+        // row being registered — and fall back to the mirror only when the call carries
+        // nothing usable. An absent config is an ordinary state (Firebase not set up on the
+        // server yet, or a mirror that drifted from the row), so it has to come back as an
+        // error the Dart side can act on rather than as a thrown exception.
+        val resolution = FirebaseConfigResolver.resolve(call.arguments as? Map<*, *>) { key ->
+            prefs.getString(key, null)
+        }
+
+        val config = when (resolution) {
+            is FirebaseConfigResult.Incomplete -> {
+                val error = "Firebase configuration is incomplete! Missing: ${resolution.missing.joinToString(", ")}"
+                PersistentLog.e(context, Constants.logTag, error)
+                result.error("500", error, null)
+                return
+            }
+            is FirebaseConfigResult.Resolved -> resolution.config
+        }
+
+        // Put the mirror back in step with what Dart just sent. Nothing else repairs it once
+        // it drifts, and it is what every fallback read depends on.
+        if (resolution.source == FirebaseConfigSource.ARGUMENTS) {
+            val editor = prefs.edit()
+            for ((key, value) in FirebaseConfigResolver.mirrorValues(config)) {
+                if (value == null) editor.remove(key) else editor.putString(key, value)
+            }
+            editor.apply()
+        }
 
         // Don't auth multiple times, unless the stored config no longer matches what the
         // existing FirebaseApp was initialized with (e.g. the user pointed at a different
@@ -42,12 +66,12 @@ class FirebaseAuthHandler: MethodCallHandlerImpl() {
         try {
             val existing = FirebaseApp.getInstance()
             val options = existing.options
-            val unchanged = options.apiKey == apiKey &&
-                    options.applicationId == applicationId &&
-                    options.projectId == projectId &&
-                    options.storageBucket == storageBucket &&
-                    options.databaseUrl == databaseUrl &&
-                    options.gcmSenderId == gcmSenderId
+            val unchanged = options.apiKey == config.apiKey &&
+                    options.applicationId == config.applicationId &&
+                    options.projectId == config.projectId &&
+                    options.storageBucket == config.storageBucket &&
+                    options.databaseUrl == config.databaseUrl &&
+                    options.gcmSenderId == config.gcmSenderId
             if (unchanged) {
                 PersistentLog.d(context, Constants.logTag, "Firebase has already been initialized with the current config!")
                 FirebaseCloudMessagingTokenHandler().getToken(context, result)
@@ -67,22 +91,22 @@ class FirebaseAuthHandler: MethodCallHandlerImpl() {
             return
         }
 
-        PersistentLog.d(context, Constants.logTag, "Authenticating client $applicationId with Firebase...")
+        PersistentLog.d(context, Constants.logTag, "Authenticating client ${config.applicationId} with Firebase...")
         // Get a FirebaseApp (manually provide config since we fetch it dynamically)
         firebaseApp = FirebaseApp.initializeApp(context, FirebaseOptions.Builder()
-            .setApiKey(apiKey)
-            .setApplicationId(applicationId)
-            .setDatabaseUrl(databaseUrl)
-            .setGcmSenderId(gcmSenderId)
-            .setProjectId(projectId)
-            .setStorageBucket(storageBucket)
+            .setApiKey(config.apiKey)
+            .setApplicationId(config.applicationId)
+            .setDatabaseUrl(config.databaseUrl)
+            .setGcmSenderId(config.gcmSenderId)
+            .setProjectId(config.projectId)
+            .setStorageBucket(config.storageBucket)
             .build()
         )
 
         // Set up Firestore / Realtime DB listeners for server URL changes
         // databaseUrl null indicates Cloud Firestore setup
         PersistentLog.d(context, Constants.logTag, "Setting Firebase database listeners...")
-        if (databaseUrl == null) {
+        if (config.databaseUrl == null) {
             FirebaseFirestore.getInstance().collection("server").document("config").addSnapshotListener(FirestoreDatabaseListener())
         } else {
             FirebaseDatabase.getInstance().getReference("config").addValueEventListener(RealtimeDatabaseListener())

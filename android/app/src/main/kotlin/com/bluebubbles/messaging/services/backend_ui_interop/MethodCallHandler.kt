@@ -155,7 +155,11 @@ class MethodCallHandler {
             dispatchHandler(call, result, context)
         } catch (e: Exception) {
             PersistentLog.e(context, Constants.logTag, "Method channel handler failed for ${call.method}", e)
-            result.error("500", "Method channel handler failed", e.localizedMessage)
+            // Kotlin's `!!` and several Android APIs throw with a null message, which used to
+            // reach Dart as PlatformException(500, ..., null) — no clue which handler or what
+            // went wrong. Fall back to the exception's own toString so there is always
+            // something to grep for on the Dart side.
+            result.error("500", "Method channel handler failed", e.localizedMessage ?: e.toString())
         }
     }
 }

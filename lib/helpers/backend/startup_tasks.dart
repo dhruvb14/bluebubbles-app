@@ -196,6 +196,7 @@ class StartupTasks {
     // We only need to do this for the main startup
     Logger.info("Loading FCM data...");
     SettingsSvc.loadFcmDataFromDatabase();
+    await SettingsSvc.repairFcmMirror();
 
     await _initHttpService();
     await _waitForInterop(lifecycle: true);
